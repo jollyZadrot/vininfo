@@ -1,186 +1,156 @@
 """
-Flask веб-застосунок: поле вводу номера авто -> кнопка Search -> результат.
+app.py
 
-Логіка роботи:
-1. Коли користувач вводить номер, додаток СПОЧАТКУ шукає його в локальному
-   кеші (файл vehicle_cache.json).
-2. Якщо номер знайдено в кеші -> миттєво повертаємо дані.
-3. Якщо номер НЕ знайдено в кеші -> намагаємось зробити запит
-   до chipex.co.uk. (УВАГА: на Render це може повернути 401 через
-   захист сайту від ботів на IP дата-центрів).
-4. Якщо парсинг успішний -> зберігаємо результат у кеш для майбутніх запитів.
+Flask веб-застосунок для пошуку інформації про авто за реєстраційним номером.
+Використовує WordPress REST API сайту chipex.co.uk.
 
 Запуск:
-    pip install -r requirements.txt
     python app.py
 
-Потім відкрити http://127.0.0.1:5000
+Або для production:
+    gunicorn app:app --bind 0.0.0.0:$PORT
 """
 
-import json
 import os
 from typing import Optional, Dict, Any
 
 from flask import Flask, render_template, request, jsonify
 
-from chipex_client import lookup_vehicle, ChipexLookupError
+from chipex_client import (
+    lookup_vehicle,
+    ChipexLookupError,
+    ChipexAuthError,
+    ChipexNotFoundError,
+    ChipexNetworkError,
+    diagnose,
+)
 
 app = Flask(__name__)
 
-# --- Налаштування кешу ---
-CACHE_FILE = "vehicle_cache.json"
 
-
-def load_cache() -> Dict[str, Any]:
+# ----------------------------------------------------------------------
+# Допоміжні функції для форматування помилок
+# ----------------------------------------------------------------------
+def format_error_for_user(error: ChipexLookupError) -> Dict[str, str]:
     """
-    Завантажує кеш з JSON-файлу.
-    Повертає порожній словник, якщо файл не існує або пошкоджений.
+    Перетворює технічну помилку у зрозуміле повідомлення для користувача.
+    Повертає dict з title та message.
     """
-    if not os.path.exists(CACHE_FILE):
-        return {}
-    try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return {}
-
-
-def save_cache(cache: Dict[str, Any]) -> None:
-    """Зберігає кеш у JSON-файл."""
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
-
-
-def get_vehicle_info(reg_number: str) -> Optional[Dict[str, Any]]:
-    """
-    Головна функція отримання інформації про авто.
-    Спочатку перевіряє кеш, потім намагається парсити сайт.
-    """
-    reg_number = reg_number.strip().upper()
-    if not reg_number:
-        return None
-
-    # 1. Перевіряємо кеш
-    cache = load_cache()
-    if reg_number in cache:
-        print(f"[CACHE HIT] {reg_number}")
-        return cache[reg_number]
-
-    # 2. Якщо немає в кеші - намагаємось парсити
-    print(f"[CACHE MISS] {reg_number}, спроба парсингу...")
-    try:
-        info = lookup_vehicle(reg_number)
-        vehicle_data = {
-            "reg": info.reg,
-            "manufacturer": info.manufacturer,
-            "model": info.model,
-            "colour": info.colour,
-            "fuel": info.fuel,
-            "year": info.year,
-            "vin": info.vin,
+    if isinstance(error, ChipexAuthError):
+        return {
+            "title": "Access Denied",
+            "message": (
+                "The chipex.co.uk server blocked our request. "
+                "This is likely due to bot protection on the server side. "
+                "Please try again later."
+            ),
         }
-        # Зберігаємо в кеш для наступних запитів
-        cache[reg_number] = vehicle_data
-        save_cache(cache)
-        print(f"[CACHE SAVED] {reg_number}")
-        return vehicle_data
-    except ChipexLookupError as exc:
-        print(f"[PARSE ERROR] {reg_number}: {exc}")
-        return None
+    elif isinstance(error, ChipexNotFoundError):
+        return {
+            "title": "Not Found",
+            "message": (
+                f"The registration number was not found in the database. "
+                "Please check the number and try again."
+            ),
+        }
+    elif isinstance(error, ChipexNetworkError):
+        return {
+            "title": "Connection Problem",
+            "message": (
+                "Could not connect to chipex.co.uk. "
+                "The server may be temporarily unavailable. "
+                "Please try again in a few moments."
+            ),
+        }
+    else:
+        return {
+            "title": "Lookup Error",
+            "message": (
+                "An unexpected error occurred while looking up the vehicle. "
+                "Please try again or contact support if the problem persists."
+            ),
+        }
 
 
-# --- Маршрути Flask ---
-
+# ----------------------------------------------------------------------
+# Маршрути
+# ----------------------------------------------------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    """Головна сторінка з формою пошуку."""
     vehicle = None
-    error = None
+    error_info = None
     reg_number = ""
 
     if request.method == "POST":
         reg_number = request.form.get("reg_number", "").strip()
+
         if not reg_number:
-            error = "Будь ласка, введіть номер автомобіля."
+            error_info = {
+                "title": "Invalid Input",
+                "message": "Please enter a registration number.",
+            }
         else:
-            vehicle = get_vehicle_info(reg_number)
-            if not vehicle:
-                error = (
-                    f"Не вдалося знайти інформацію для номера '{reg_number}'. "
-                    "Можливо, цей номер не існує, або сервер заблокований. "
-                    "Спробуйте інший номер або додайте його в кеш вручну."
+            try:
+                vehicle = lookup_vehicle(reg_number)
+            except ChipexLookupError as exc:
+                error_info = format_error_for_user(exc)
+                # Додаємо технічні деталі в логи (не показуємо користувачу)
+                app.logger.error(
+                    f"Lookup failed for '{reg_number}': "
+                    f"{type(exc).__name__}: {exc} | "
+                    f"Status: {exc.status_code} | "
+                    f"Details: {exc.details}"
                 )
 
     return render_template(
         "index.html",
         vehicle=vehicle,
-        error=error,
+        error=error_info,
         reg_number=reg_number,
     )
 
 
-# --- Тимчасові маршрути для діагностики (можна видалити після тестування) ---
-
-@app.route("/debug")
-def debug_chipex():
-    """
-    Діагностичний маршрут: перевіряє, що повертає chipex.co.uk
-    безпосередньо з серверу Render.
-    """
-    import requests
-
-    url = "https://chipex.co.uk/product/your-registration-touch-up-kit/"
-    params = {"reg": "E366SJW"}
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        )
-    }
-
+@app.route("/api/lookup/<reg_number>")
+def api_lookup(reg_number: str):
+    """JSON API endpoint."""
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=15)
+        vehicle = lookup_vehicle(reg_number)
         return jsonify({
-            "status_code": response.status_code,
-            "server_header": response.headers.get("Server", "N/A"),
-            "content_type": response.headers.get("Content-Type", "N/A"),
-            "html_snippet": response.text[:500],
+            "success": True,
+            "data": vehicle.to_dict(),
         })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except ChipexLookupError as exc:
+        error_info = format_error_for_user(exc)
+        return jsonify({
+            "success": False,
+            "error": error_info,
+            "technical": {
+                "type": type(exc).__name__,
+                "status_code": exc.status_code,
+                "message": str(exc),
+            },
+        }), exc.status_code or 500
 
 
-@app.route("/update_cache", methods=["POST"])
-def update_cache():
+@app.route("/diagnose")
+def diagnose_endpoint():
     """
-    Дозволяє додавати/оновлювати записи в кеші через POST-запит.
-    Формат JSON: {"reg_number": "AB12CDE", "data": {...}}
+    Діагностичний endpoint для перевірки стану на Render.
+    Відкрийте https://your-app.onrender.com/diagnose
     """
-    payload = request.get_json(silent=True) or {}
-    reg_number = payload.get("reg_number", "").strip().upper()
-    data = payload.get("data")
-
-    if not reg_number or not data:
-        return jsonify({"error": "Потрібні reg_number та data"}), 400
-
-    cache = load_cache()
-    cache[reg_number] = data
-    save_cache(cache)
-    return jsonify({"ok": True, "reg_number": reg_number})
+    return jsonify(diagnose())
 
 
-@app.route("/cache_status")
-def cache_status():
-    """Показує кількість записів у кеші (без самих даних)."""
-    cache = load_cache()
-    return jsonify({
-        "total_entries": len(cache),
-        "reg_numbers": list(cache.keys())
-    })
+@app.route("/health")
+def health():
+    """Health check endpoint."""
+    return jsonify({"status": "ok"})
 
 
+# ----------------------------------------------------------------------
+# Запуск
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
-    # Використовуємо змінну PORT для сумісності з Render
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(host="0.0.0.0", port=port, debug=debug)
