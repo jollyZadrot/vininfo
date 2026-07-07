@@ -22,13 +22,32 @@ BASE_URL = "https://chipex.co.uk/product/your-registration-touch-up-kit/"
 # Виглядає так: reg_json: '{"reg":"E366SJW", ... }',
 REG_JSON_PATTERN = re.compile(r"reg_json:\s*'({.*?})'", re.DOTALL)
 
+# Повний набір заголовків "як у справжнього браузера". chipex.co.uk стоїть
+# за антибот-захистом (Cloudflare-подібним), який блокує запити з голим
+# User-Agent і повертає 401/403. Що більше заголовків збігається з реальним
+# браузером — то менше шансів на блок.
 HEADERS = {
-    # Деякі сайти віддають інший (обрізаний) HTML ботам без User-Agent
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    )
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-GB,en;q=0.9,uk;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Referer": "https://chipex.co.uk/",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
 }
 
 
@@ -67,8 +86,17 @@ def fetch_html(reg_number: str, timeout: int = 15) -> str:
 
     params = {"reg": reg_number}
     try:
-        response = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=timeout)
-        response.raise_for_status()
+        with requests.Session() as session:
+            session.headers.update(HEADERS)
+
+            # Спочатку "заходимо" на головну — це отримує cookies (у т.ч.
+            # можливий cf_clearance/аналогічний токен антибот-системи) і
+            # робить наступний запит із reg= схожим на природну навігацію,
+            # а не на прямий бот-запит "з нічого".
+            session.get("https://chipex.co.uk/", timeout=timeout)
+
+            response = session.get(BASE_URL, params=params, timeout=timeout)
+            response.raise_for_status()
     except requests.RequestException as exc:
         raise ChipexLookupError(f"Не вдалося звернутися до chipex.co.uk: {exc}") from exc
 
@@ -105,6 +133,15 @@ def extract_reg_json(html: str) -> dict:
         return json.loads(raw_json)
     except json.JSONDecodeError as exc:
         raise ChipexLookupError(f"Помилка розбору JSON з відповіді сайту: {exc}") from exc
+
+
+# Якщо навіть з повними заголовками + сесією сайт все одно віддає 401/403
+# (типово трапляється саме з IP хмарних хостингів на кшталт Render/Railway,
+# бо антибот-системи частіше блокують дата-центри, ніж домашні IP) —
+# запасний варіант: бібліотека cloudscraper, яка вміє проходити
+# Cloudflare-подібні виклики. Встановлюється як:
+#     pip install cloudscraper
+# і замінює requests.Session() на cloudscraper.create_scraper() у fetch_html.
 
 
 def lookup_vehicle(reg_number: str) -> VehicleInfo:
