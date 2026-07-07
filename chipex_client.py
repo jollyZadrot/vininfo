@@ -277,7 +277,7 @@ def fetch_via_html_parsing(reg_number: str, timeout: int = 15) -> VehicleInfo:
     match = REG_JSON_PATTERN.search(html)
     if not match:
         # Fallback: шукаємо в <script> тегах
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html, "html.parser")
         for script in soup.find_all("script"):
             script_text = script.string or ""
             match = REG_JSON_PATTERN.search(script_text)
