@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vehicle Lookup — Chipex</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Vehicle Lookup</h1>
+        <p class="subtitle">Enter a registration number, data is pulled from chipex.co.uk</p>
+
+        <form method="POST" class="search-form">
+            <input
+                type="text"
+                name="reg_number"
+                placeholder="Enter the license plate"
+                value="{{ reg_number }}"
+                autocomplete="off"
+                required
+            >
+            <button type="submit">Search</button>
+        </form>
+
+        {% if error %}
+            <div class="result error">
+                <strong>Error:</strong> {{ error }}
+            </div>
+        {% endif %}
+
+        {% if vehicle %}
+            <div class="result success">
+                <h2>{{ vehicle.reg }}</h2>
+                <table>
+                    <tr><td>Manufacturer</td><td>{{ vehicle.manufacturer }}</td></tr>
+                    <tr><td>Model</td><td>{{ vehicle.model }}</td></tr>
+                    <tr><td>Year</td><td>{{ vehicle.year }}</td></tr>
+                    <tr><td>Colour</td><td>{{ vehicle.colour }}</td></tr>
+                    <tr><td>Fuel</td><td>{{ vehicle.fuel }}</td></tr>
+                    <tr><td>VIN</td><td>{{ vehicle.vin }}</td></tr>
+                </table>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>
