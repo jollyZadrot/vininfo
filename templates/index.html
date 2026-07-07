@@ -1,47 +1,98 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Vehicle Lookup — Chipex</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Lookup — UK Registration</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
-        <h1>Vehicle Lookup</h1>
-        <p class="subtitle">Enter a registration number, data is pulled from chipex.co.uk</p>
+        <header>
+            <h1>Vehicle Lookup</h1>
+            <p class="subtitle">UK vehicle information by registration plate</p>
+        </header>
 
-        <form method="POST" class="search-form">
-            <input
-                type="text"
-                name="reg_number"
-                placeholder="Enter the license plate"
-                value="{{ reg_number }}"
-                autocomplete="off"
-                required
-            >
+        <form method="POST" class="search-form" autocomplete="off">
+            <div class="input-wrapper">
+                <span class="prefix">GB</span>
+                <input
+                    type="text"
+                    name="reg_number"
+                    id="reg_number"
+                    placeholder="Enter registration (e.g. E366SJW)"
+                    value="{{ reg_number }}"
+                    maxlength="8"
+                    required
+                    autofocus
+                >
+            </div>
             <button type="submit">Search</button>
         </form>
 
         {% if error %}
-            <div class="result error">
-                <strong>Error:</strong> {{ error }}
+        <div class="alert alert-error">
+            <div class="alert-icon">⚠️</div>
+            <div class="alert-content">
+                <strong>{{ error.title }}</strong>
+                <p>{{ error.message }}</p>
             </div>
+        </div>
         {% endif %}
 
         {% if vehicle %}
-            <div class="result success">
-                <h2>{{ vehicle.reg }}</h2>
-                <table>
-                    <tr><td>Manufacturer</td><td>{{ vehicle.manufacturer }}</td></tr>
-                    <tr><td>Model</td><td>{{ vehicle.model }}</td></tr>
-                    <tr><td>Year</td><td>{{ vehicle.year }}</td></tr>
-                    <tr><td>Colour</td><td>{{ vehicle.colour }}</td></tr>
-                    <tr><td>Fuel</td><td>{{ vehicle.fuel }}</td></tr>
-                    <tr><td>VIN</td><td>{{ vehicle.vin }}</td></tr>
-                </table>
+        <div class="alert alert-success">
+            <div class="alert-icon">✅</div>
+            <div class="alert-content">
+                <strong>Vehicle found</strong>
             </div>
+        </div>
+
+        <div class="vehicle-card">
+            <div class="vehicle-header">
+                <span class="reg-badge">{{ vehicle.reg }}</span>
+            </div>
+            <table class="vehicle-details">
+                <tbody>
+                    <tr>
+                        <th>Manufacturer</th>
+                        <td>{{ vehicle.manufacturer or '—' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Model</th>
+                        <td>{{ vehicle.model or '—' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Year</th>
+                        <td>{{ vehicle.year or '—' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Colour</th>
+                        <td>{{ vehicle.colour or '—' }}</td>
+                    </tr>
+                    <tr>
+                        <th>Fuel type</th>
+                        <td>{{ vehicle.fuel or '—' }}</td>
+                    </tr>
+                    <tr>
+                        <th>VIN</th>
+                        <td><code>{{ vehicle.vin or '—' }}</code></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
         {% endif %}
+
+        <footer>
+            <p>Data source: <a href="https://chipex.co.uk" target="_blank" rel="noopener">chipex.co.uk</a></p>
+        </footer>
     </div>
+
+    <script>
+        // Автоматично переводимо в верхній регістр
+        document.getElementById('reg_number').addEventListener('input', function(e) {
+            e.target.value = e.target.value.toUpperCase();
+        });
+    </script>
 </body>
 </html>
